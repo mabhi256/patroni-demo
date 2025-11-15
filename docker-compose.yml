@@ -1,0 +1,115 @@
+version: "3.8"
+
+networks:
+  patroni-net:
+
+x-etcd-common-env: &etcd-common-env
+  ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+  ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+  ETCD_INITIAL_CLUSTER: etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+  ETCD_INITIAL_CLUSTER_STATE: new
+  ETCD_INITIAL_CLUSTER_TOKEN: patroni-cluster
+
+services:
+  etcd1: &etcd
+    image: quay.io/coreos/etcd:v3.5.11
+    networks: [patroni-net]
+    container_name: demo-etcd1
+    hostname: etcd1
+    environment:
+      <<: *etcd-common-env
+      ETCD_NAME: etcd1
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd1:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd1:2380
+
+  etcd2:
+    <<: *etcd
+    container_name: demo-etcd2
+    hostname: etcd2
+    environment:
+      <<: *etcd-common-env
+      ETCD_NAME: etcd2
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd2:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd2:2380
+
+  etcd3:
+    <<: *etcd
+    container_name: demo-etcd3
+    hostname: etcd3
+    environment:
+      <<: *etcd-common-env
+      ETCD_NAME: etcd3
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd3:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd3:2380
+
+  haproxy:
+    image: haproxy:2.8-alpine
+    networks: [patroni-net]
+    container_name: demo-haproxy
+    hostname: haproxy
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+      - "7000:7000"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - patroni1
+      - patroni2
+      - patroni3
+
+  patroni1: &patroni
+    image: ghcr.io/zalando/spilo-16:3.2-p3
+    networks: [patroni-net]
+    container_name: demo-patroni1
+    hostname: patroni1
+    environment: &patroni_env
+      SCOPE: demo
+      PGVERSION: "16"
+      
+      # CRITICAL: Tell Spilo to use external etcd, not embedded
+      DCS_ENABLE_KUBERNETES_API: "false"
+      ETCD3_PROTOCOL: "http"
+      ETCD3_HOSTS: "etcd1:2379,etcd2:2379,etcd3:2379"
+      
+      # PostgreSQL users
+      PGUSER_SUPERUSER: postgres
+      PGPASSWORD_SUPERUSER: postgres
+      PGUSER_ADMIN: admin
+      PGPASSWORD_ADMIN: admin
+      PGUSER_STANDBY: replicator
+      PGPASSWORD_STANDBY: replicator
+    volumes:
+      - patroni1-data:/home/postgres/pgdata
+    ports:
+      - "5432:5432"
+      - "8008:8008"
+    depends_on:
+      - etcd1
+      - etcd2
+      - etcd3
+
+  patroni2:
+    <<: *patroni
+    container_name: demo-patroni2
+    hostname: patroni2
+    volumes:
+      - patroni2-data:/home/postgres/pgdata
+    ports:
+      - "5433:5432"
+      - "8009:8008"
+
+  patroni3:
+    <<: *patroni
+    container_name: demo-patroni3
+    hostname: patroni3
+    volumes:
+      - patroni3-data:/home/postgres/pgdata
+    ports:
+      - "5434:5432"
+      - "8010:8008"
+
+volumes:
+  patroni1-data:
+  patroni2-data:
+  patroni3-data:
